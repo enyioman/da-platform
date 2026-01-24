@@ -45,7 +45,7 @@ jobs:
         if: steps.fmt.outcome == 'failure'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
           script: |
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -147,7 +147,7 @@ jobs:
         env:
           PLAN: "${{ steps.plan.outputs.stdout }}"
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
           script: |
             const output = `### Terraform Plan Results 📋
             
@@ -212,4 +212,4 @@ jobs:
         with:
           path: infracost.json
           behavior: update
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
