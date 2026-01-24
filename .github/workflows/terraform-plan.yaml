@@ -123,7 +123,7 @@ jobs:
       - name: Generate Plan Summary
         id: plan-summary
         run: |
-          # Extract resource counts
+          # Extract the resource counts
           RESOURCES_TO_ADD=$(grep -c "will be created" tfplan.txt || echo "0")
           RESOURCES_TO_CHANGE=$(grep -c "will be updated" tfplan.txt || echo "0")
           RESOURCES_TO_DESTROY=$(grep -c "will be destroyed" tfplan.txt || echo "0")
