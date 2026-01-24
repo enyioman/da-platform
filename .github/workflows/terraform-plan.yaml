@@ -126,9 +126,9 @@ jobs:
         id: plan-summary
         run: |
           if [ -f tfplan.txt ]; then
-            ADD=$(grep -c "will be created" tfplan.txt || echo "0")
-            CHANGE=$(grep -c "will be updated" tfplan.txt || echo "0")
-            DESTROY=$(grep -c "will be destroyed" tfplan.txt || echo "0")
+            ADD=$(grep -c "will be created" tfplan.txt || true)
+            CHANGE=$(grep -c "will be updated" tfplan.txt || true)
+            DESTROY=$(grep -c "will be destroyed" tfplan.txt || true)
           else
             ADD=0; CHANGE=0; DESTROY=0
           fi
