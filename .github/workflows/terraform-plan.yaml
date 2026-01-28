@@ -11,7 +11,7 @@ on:
 env:
   AWS_REGION: us-east-1
   TF_VERSION: 1.6.0
-  TF_WORKING_DIR: . # change this if your terraform root is in a folder, for example: envs/prod
+  TF_WORKING_DIR: .
 
 jobs:
   terraform-validate:
@@ -21,9 +21,11 @@ jobs:
       fmt: ${{ steps.fmt.outcome }}
       init: ${{ steps.init.outcome }}
       validate: ${{ steps.validate.outcome }}
+
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -47,9 +49,11 @@ jobs:
   terraform-security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       security-events: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -78,13 +82,16 @@ jobs:
     name: Terraform Plan
     runs-on: ubuntu-latest
     needs: [ terraform-validate, terraform-security-scan ]
+
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -99,6 +106,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
+        id: init
         run: terraform init
 
       - name: Terraform Plan
@@ -109,13 +117,30 @@ jobs:
           terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
           code=${PIPESTATUS[0]}
           echo "exitcode=$code" >> $GITHUB_OUTPUT
-
+          
+          # Always show last 100 lines for debugging
+          echo "=== Last 100 lines of plan output ==="
+          tail -100 plan-output.txt
+          
           if [ -f tfplan ]; then
             terraform show -no-color tfplan > tfplan.txt
             terraform show -json tfplan > plan.json
           fi
+          
+          exit 0  # Don't fail yet, we want to upload artifacts
+
+      - name: Display Full Error if Plan Failed
+        if: steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "❌ Terraform plan failed with exit code 1"
+          echo ""
+          echo "=== Full Plan Output ==="
+          cat plan-output.txt
+          echo ""
+          echo "=== End of Plan Output ==="
 
       - name: Generate Plan Summary
+        if: always()
         id: plan-summary
         run: |
           if [ -f tfplan.txt ]; then
@@ -135,47 +160,75 @@ jobs:
         with:
           name: terraform-plan
           path: |
-            tfplan
-            tfplan.txt
-            plan.json
-            plan-output.txt
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/tfplan.txt
+            ${{ env.TF_WORKING_DIR }}/plan.json
+            ${{ env.TF_WORKING_DIR }}/plan-output.txt
           retention-days: 5
 
       - name: Comment Plan on PR
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event.pull_request.head.repo.full_name == github.repository && always()
         uses: actions/github-script@v7
+        env:
+          PLAN_EXITCODE: ${{ steps.plan.outputs.exitcode }}
         with:
           github-token: ${{ secrets.INFRA_TOKEN }}
           script: |
             const fs = require('fs');
-
+            const exitCode = process.env.PLAN_EXITCODE;
+            
             let planText = '';
-            if (fs.existsSync('tfplan.txt')) planText = fs.readFileSync('tfplan.txt', 'utf8');
-            else if (fs.existsSync('plan-output.txt')) planText = fs.readFileSync('plan-output.txt', 'utf8');
-            else planText = 'No plan output was generated.';
+            const workingDir = process.env.TF_WORKING_DIR || '.';
+            
+            // Try to read plan output
+            const files = ['tfplan.txt', 'plan-output.txt'];
+            for (const file of files) {
+              const filepath = `${workingDir}/${file}`;
+              if (fs.existsSync(filepath)) {
+                planText = fs.readFileSync(filepath, 'utf8');
+                break;
+              }
+            }
+            
+            if (!planText) {
+              planText = 'No plan output was generated. Check the workflow logs for errors.';
+            }
 
             const truncated = planText.length > 10000 ? planText.slice(0, 10000) + '\n... (truncated)' : planText;
+            
+            let statusEmoji = '✅';
+            let statusText = 'Success';
+            if (exitCode === '1') {
+              statusEmoji = '❌';
+              statusText = 'Error';
+            } else if (exitCode === '2') {
+              statusEmoji = '📝';
+              statusText = 'Changes Detected';
+            }
 
-            const output = `### Terraform Plan Results 📋
+            const output = `### Terraform Plan Results ${statusEmoji}
 
-            #### Validate
-            - fmt: \`${{ needs.terraform-validate.outputs.fmt }}\`
-            - init: \`${{ needs.terraform-validate.outputs.init }}\`
-            - validate: \`${{ needs.terraform-validate.outputs.validate }}\`
-            - plan: \`${{ steps.plan.outputs.exitcode }}\` (0=no changes, 2=changes, 1=error)
+            #### Validation
+            - **Format Check:** \`${{ needs.terraform-validate.outputs.fmt }}\`
+            - **Init:** \`${{ needs.terraform-validate.outputs.init }}\`
+            - **Validate:** \`${{ needs.terraform-validate.outputs.validate }}\`
+            - **Plan:** \`${statusText}\` (exit code: ${exitCode})
 
             #### Changes Summary
             - **To Add:** ${{ steps.plan-summary.outputs.add }}
             - **To Change:** ${{ steps.plan-summary.outputs.change }}
             - **To Destroy:** ${{ steps.plan-summary.outputs.destroy }}
 
-            <details><summary>Show Plan</summary>
+            <details><summary>Show Plan Output</summary>
 
             \`\`\`terraform
             ${truncated}
             \`\`\`
 
-            </details>`;
+            </details>
+
+            ${exitCode === '1' ? '\n⚠️ **Plan failed!** Check the workflow logs and plan output above for details.' : ''}
+            `;
 
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -186,30 +239,35 @@ jobs:
 
       - name: Fail if plan errored
         if: steps.plan.outputs.exitcode == '1'
-        run: exit 1
+        run: |
+          echo "❌ Terraform plan failed. See logs above for details."
+          exit 1
 
   terraform-cost-estimate:
     name: Cost Estimation
     runs-on: ubuntu-latest
     needs: terraform-plan
     if: github.event_name == 'pull_request'
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
           name: terraform-plan
+        continue-on-error: true
 
       - uses: infracost/actions/setup@v3
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
       - name: Generate Infracost JSON
+        continue-on-error: true
         run: |
           if [ -f plan.json ]; then
             infracost breakdown --path plan.json --format json --out-file infracost.json
           else
-            echo "plan.json not found, skipping infracost"
+            echo "⚠️ plan.json not found, skipping infracost"
             exit 0
           fi
 
@@ -220,3 +278,4 @@ jobs:
           path: infracost.json
           behavior: update
           github-token: ${{ secrets.INFRA_TOKEN }}
+        continue-on-error: true
