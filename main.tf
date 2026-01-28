@@ -28,6 +28,7 @@ provider "aws" {
     tags = {
       Project     = var.project_name
       Environment = var.environment
+      Service     = var.project_name
       ManagedBy   = "Terraform"
       Owner       = var.owner
     }

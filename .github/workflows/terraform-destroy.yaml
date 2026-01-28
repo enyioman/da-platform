@@ -90,7 +90,7 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
           script: |
             const status = '${{ steps.destroy.outcome }}' === 'success' ? '✅ COMPLETED' : '❌ FAILED';
             github.rest.issues.create({
