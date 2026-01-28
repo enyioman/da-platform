@@ -110,10 +110,8 @@ jobs:
 
       - name: Debug environment value
         run: |
-          terraform console <<EOF
-          var.environment
-          EOF
-
+          echo "var.environment" | timeout 30 terraform console -no-color || true
+      
       - name: Terraform Plan
         id: plan
         continue-on-error: true
@@ -132,7 +130,7 @@ jobs:
         run: |
           echo "Terraform plan failed. Showing plan-output.txt:"
           sed -n '1,200p' plan-output.txt
-          
+
       - name: Generate Plan Summary
         id: plan-summary
         run: |
