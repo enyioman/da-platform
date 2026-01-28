@@ -108,6 +108,12 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
+      - name: Debug environment value
+        run: |
+          terraform console <<EOF
+          var.environment
+          EOF
+
       - name: Terraform Plan
         id: plan
         continue-on-error: true
@@ -121,7 +127,12 @@ jobs:
             terraform show -no-color tfplan > tfplan.txt
             terraform show -json tfplan > plan.json
           fi
-
+      - name: Show plan error
+        if: steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "Terraform plan failed. Showing plan-output.txt:"
+          sed -n '1,200p' plan-output.txt
+          
       - name: Generate Plan Summary
         id: plan-summary
         run: |
