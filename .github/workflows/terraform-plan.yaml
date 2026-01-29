@@ -114,7 +114,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          terraform plan -var-file=terraform.tfvars -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
           code=${PIPESTATUS[0]}
           echo "exitcode=$code" >> $GITHUB_OUTPUT
           
