@@ -13,7 +13,7 @@ terraform {
 
 # Parameter Group for Redis
 resource "aws_elasticache_parameter_group" "main" {
-  name   = "${var.name}-redis-params"
+  name   = "${lower(var.name)}-redis-params"
   family = "redis${split(".", var.engine_version)[0]}"
 
   parameter {
@@ -82,7 +82,7 @@ resource "aws_elasticache_replication_group" "main" {
 resource "aws_elasticache_cluster" "main" {
   count = var.automatic_failover_enabled ? 0 : 1
 
-  cluster_id           = "${var.name}-redis"
+  cluster_id           = "${lower(var.name)}-redis"
   engine               = "redis"
   engine_version       = var.engine_version
   node_type            = var.node_type

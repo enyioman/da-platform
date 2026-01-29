@@ -37,7 +37,7 @@ provider "aws" {
 
 # Local variables
 locals {
-  name_prefix = "${var.project_name}-${var.environment}"
+  name_prefix = "${var.project_name}-${lower(var.environment)}"
 
   common_tags = {
     Project     = var.project_name
