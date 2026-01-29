@@ -22,7 +22,7 @@ variable "security_group_ids" {
 variable "node_type" {
   description = "ElastiCache node type"
   type        = string
-  default     = "cache.t3.micro"
+  default     = "cache.t4g.micro"
 }
 
 variable "num_cache_nodes" {
