@@ -27,8 +27,8 @@ ecs_task_memory   = 512 # 512 MB
 ecs_desired_count = 2   # 2 tasks for high availability
 
 # Load Balancer
-enable_https    = true # Set to true if you have a domain and certificate
-certificate_arn = ""    # Add ACM certificate ARN if enabling HTTPS
+enable_https    = false # Set to true if you have a domain and certificate
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/dummy"    # Add ACM certificate ARN if enabling HTTPS
 
 # RDS Configuration
 rds_engine_version     = "17.6"
