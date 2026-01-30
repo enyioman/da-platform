@@ -201,7 +201,7 @@ resource "aws_route_table_association" "database" {
 
 # DB Subnet Group for RDS
 resource "aws_db_subnet_group" "main" {
-  name       = "${var.name}-db-subnet-group"
+  name       = "${lower(var.name)}-db-subnet-group"
   subnet_ids = aws_subnet.database[*].id
 
   tags = merge(
@@ -214,7 +214,7 @@ resource "aws_db_subnet_group" "main" {
 
 # ElastiCache Subnet Group
 resource "aws_elasticache_subnet_group" "main" {
-  name       = "${var.name}-cache-subnet-group"
+  name       = "${lower(var.name)}-cache-subnet-group"
   subnet_ids = aws_subnet.private[*].id
 
   tags = merge(

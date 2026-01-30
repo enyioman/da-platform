@@ -46,7 +46,7 @@ resource "aws_secretsmanager_secret_version" "db_password" {
 
 # DB Parameter Group
 resource "aws_db_parameter_group" "main" {
-  name   = "${var.name}-postgres-params"
+  name   = "${lower(var.name)}-postgres-params"
   family = "postgres${split(".", var.engine_version)[0]}"
 
   parameter {
@@ -92,6 +92,7 @@ resource "aws_db_instance" "main" {
   backup_retention_period = var.backup_retention_period
   backup_window          = var.backup_window
   maintenance_window     = var.maintenance_window
+  copy_tags_to_snapshot  = true
 
   # Monitoring
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
@@ -119,7 +120,7 @@ resource "aws_db_instance" "main" {
 
 # IAM Role for RDS Enhanced Monitoring
 resource "aws_iam_role" "rds_monitoring" {
-  name = "${var.name}-rds-monitoring-role"
+  name = "${lower(var.name)}-rds-monitoring-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

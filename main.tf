@@ -28,6 +28,7 @@ provider "aws" {
     tags = {
       Project     = var.project_name
       Environment = var.environment
+      Service     = var.project_name
       ManagedBy   = "Terraform"
       Owner       = var.owner
     }
@@ -36,7 +37,7 @@ provider "aws" {
 
 # Local variables
 locals {
-  name_prefix = "${var.project_name}-${var.environment}"
+  name_prefix = "${var.project_name}-${lower(var.environment)}"
 
   common_tags = {
     Project     = var.project_name

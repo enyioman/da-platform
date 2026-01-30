@@ -8,15 +8,15 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment name (dev, staging, prod)"
+  description = "Environment name (Dev, staging, prod)"
   type        = string
-  default     = "dev"
+  default     = "Dev"
 }
 
 variable "owner" {
   description = "Owner of the infrastructure"
   type        = string
-  default     = "DevOps Team"
+  default     = "Enyioman"
 }
 
 variable "aws_region" {
@@ -212,3 +212,4 @@ variable "alarm_email" {
   type        = string
   default     = "fynewily@gmail.com"
 }
+# Test change

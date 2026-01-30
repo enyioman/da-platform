@@ -2,29 +2,34 @@ name: Terraform Plan on Pull Request
 
 on:
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [ main, develop ]
     paths:
-      - '**.tf'
-      - '**.tfvars'
+      - '**/*.tf'
+      - '**/*.tfvars'
       - '.github/workflows/terraform-*.yml'
 
 env:
   AWS_REGION: us-east-1
   TF_VERSION: 1.6.0
+  TF_WORKING_DIR: .
 
 jobs:
   terraform-validate:
     name: Validate Terraform
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    outputs:
+      fmt: ${{ steps.fmt.outcome }}
+      init: ${{ steps.init.outcome }}
+      validate: ${{ steps.validate.outcome }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -33,7 +38,7 @@ jobs:
         run: terraform fmt -check -recursive
         continue-on-error: true
 
-      - name: Terraform Init
+      - name: Terraform Init (no backend)
         id: init
         run: terraform init -backend=false
 
@@ -41,37 +46,27 @@ jobs:
         id: validate
         run: terraform validate -no-color
 
-      - name: Comment Format Check Results
-        if: steps.fmt.outcome == 'failure'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ **Terraform Format Check Failed**\n\nPlease run `terraform fmt -recursive` to fix formatting issues.'
-            })
-
   terraform-security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
-      - name: Run tfsec
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tfsec (SARIF)
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           soft_fail: true
           format: sarif
-          output: tfsec-results.sarif
+          additional_args: --out tfsec-results.sarif
 
       - name: Upload tfsec results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
         if: always()
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: tfsec-results.sarif
 
@@ -86,26 +81,27 @@ jobs:
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    needs: [terraform-validate, terraform-security-scan]
-    
+    needs: [ terraform-validate, terraform-security-scan ]
+
     permissions:
       contents: read
       pull-requests: write
-      id-token: write  # Required for OIDC
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      id-token: write
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-TerraformPlan
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -115,101 +111,171 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: |
-          terraform plan -no-color -out=tfplan
-          terraform show -no-color tfplan > tfplan.txt
         continue-on-error: true
+        run: |
+          set -o pipefail
+          terraform plan -var-file=terraform.tfvars -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          code=${PIPESTATUS[0]}
+          echo "exitcode=$code" >> $GITHUB_OUTPUT
+          
+          # Always show last 100 lines for debugging
+          echo "=== Last 100 lines of plan output ==="
+          tail -100 plan-output.txt
+          
+          if [ -f tfplan ]; then
+            terraform show -no-color tfplan > tfplan.txt
+            terraform show -json tfplan > plan.json
+          fi
+          
+          exit 0  # Don't fail yet, we want to upload artifacts
+
+      - name: Display Full Error if Plan Failed
+        if: steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "❌ Terraform plan failed with exit code 1"
+          echo ""
+          echo "=== Full Plan Output ==="
+          cat plan-output.txt
+          echo ""
+          echo "=== End of Plan Output ==="
 
       - name: Generate Plan Summary
+        if: always()
         id: plan-summary
         run: |
-          # Extract resource counts
-          RESOURCES_TO_ADD=$(grep -c "will be created" tfplan.txt || echo "0")
-          RESOURCES_TO_CHANGE=$(grep -c "will be updated" tfplan.txt || echo "0")
-          RESOURCES_TO_DESTROY=$(grep -c "will be destroyed" tfplan.txt || echo "0")
-          
-          echo "add=$RESOURCES_TO_ADD" >> $GITHUB_OUTPUT
-          echo "change=$RESOURCES_TO_CHANGE" >> $GITHUB_OUTPUT
-          echo "destroy=$RESOURCES_TO_DESTROY" >> $GITHUB_OUTPUT
+          if [ -f tfplan.txt ]; then
+            ADD=$(grep -c "will be created" tfplan.txt || true)
+            CHANGE=$(grep -c "will be updated" tfplan.txt || true)
+            DESTROY=$(grep -c "will be destroyed" tfplan.txt || true)
+          else
+            ADD=0; CHANGE=0; DESTROY=0
+          fi
+          echo "add=$ADD" >> $GITHUB_OUTPUT
+          echo "change=$CHANGE" >> $GITHUB_OUTPUT
+          echo "destroy=$DESTROY" >> $GITHUB_OUTPUT
 
       - name: Upload Plan Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan
           path: |
-            tfplan
-            tfplan.txt
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/tfplan.txt
+            ${{ env.TF_WORKING_DIR }}/plan.json
+            ${{ env.TF_WORKING_DIR }}/plan-output.txt
           retention-days: 5
 
       - name: Comment Plan on PR
+        if: github.event.pull_request.head.repo.full_name == github.repository && always()
         uses: actions/github-script@v7
-        if: github.event_name == 'pull_request'
         env:
-          PLAN: "${{ steps.plan.outputs.stdout }}"
+          PLAN_EXITCODE: ${{ steps.plan.outputs.exitcode }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
           script: |
-            const output = `### Terraform Plan Results 📋
+            const fs = require('fs');
+            const exitCode = process.env.PLAN_EXITCODE;
             
-            #### Terraform Format and Style 🖌 \`${{ steps.fmt.outcome }}\`
-            #### Terraform Initialization ⚙️ \`${{ steps.init.outcome }}\`
-            #### Terraform Validation 🤖 \`${{ steps.validate.outcome }}\`
-            #### Terraform Plan 📖 \`${{ steps.plan.outcome }}\`
+            let planText = '';
+            const workingDir = process.env.TF_WORKING_DIR || '.';
             
+            // Try to read plan output
+            const files = ['tfplan.txt', 'plan-output.txt'];
+            for (const file of files) {
+              const filepath = `${workingDir}/${file}`;
+              if (fs.existsSync(filepath)) {
+                planText = fs.readFileSync(filepath, 'utf8');
+                break;
+              }
+            }
+            
+            if (!planText) {
+              planText = 'No plan output was generated. Check the workflow logs for errors.';
+            }
+
+            const truncated = planText.length > 10000 ? planText.slice(0, 10000) + '\n... (truncated)' : planText;
+            
+            let statusEmoji = '✅';
+            let statusText = 'Success';
+            if (exitCode === '1') {
+              statusEmoji = '❌';
+              statusText = 'Error';
+            } else if (exitCode === '2') {
+              statusEmoji = '📝';
+              statusText = 'Changes Detected';
+            }
+
+            const output = `### Terraform Plan Results ${statusEmoji}
+
+            #### Validation
+            - **Format Check:** \`${{ needs.terraform-validate.outputs.fmt }}\`
+            - **Init:** \`${{ needs.terraform-validate.outputs.init }}\`
+            - **Validate:** \`${{ needs.terraform-validate.outputs.validate }}\`
+            - **Plan:** \`${statusText}\` (exit code: ${exitCode})
+
             #### Changes Summary
-            - **To Add:** ${{ steps.plan-summary.outputs.add }} resources
-            - **To Change:** ${{ steps.plan-summary.outputs.change }} resources
-            - **To Destroy:** ${{ steps.plan-summary.outputs.destroy }} resources
-            
-            <details><summary>Show Plan</summary>
-            
+            - **To Add:** ${{ steps.plan-summary.outputs.add }}
+            - **To Change:** ${{ steps.plan-summary.outputs.change }}
+            - **To Destroy:** ${{ steps.plan-summary.outputs.destroy }}
+
+            <details><summary>Show Plan Output</summary>
+
             \`\`\`terraform
-            ${process.env.PLAN}
+            ${truncated}
             \`\`\`
-            
+
             </details>
-            
-            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
-            
-            github.rest.issues.createComment({
+
+            ${exitCode === '1' ? '\n⚠️ **Plan failed!** Check the workflow logs and plan output above for details.' : ''}
+            `;
+
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: output
-            })
+            });
 
-      - name: Terraform Plan Status
-        if: steps.plan.outcome == 'failure'
-        run: exit 1
+      - name: Fail if plan errored
+        if: steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "❌ Terraform plan failed. See logs above for details."
+          exit 1
 
   terraform-cost-estimate:
     name: Cost Estimation
     runs-on: ubuntu-latest
     needs: terraform-plan
     if: github.event_name == 'pull_request'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
-      - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
         with:
           name: terraform-plan
+        continue-on-error: true
 
-      - name: Setup Infracost
-        uses: infracost/actions/setup@v3
+      - uses: infracost/actions/setup@v3
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
       - name: Generate Infracost JSON
-        run: infracost breakdown --path tfplan --format json --out-file infracost.json
         continue-on-error: true
+        run: |
+          if [ -f plan.json ]; then
+            infracost breakdown --path plan.json --format json --out-file infracost.json
+          else
+            echo "⚠️ plan.json not found, skipping infracost"
+            exit 0
+          fi
 
       - name: Post Infracost comment
-        uses: infracost/actions/comment@v1
         if: success()
+        uses: infracost/actions/comment@v1
         with:
           path: infracost.json
           behavior: update
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.INFRA_TOKEN }}
+        continue-on-error: true
